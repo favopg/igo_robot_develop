@@ -46,15 +46,15 @@ document.addEventListener('DOMContentLoaded', () => {
     async function updateState() {
         const response = await fetch('/state');
         const data = await response.json();
-        renderBoard(data.board);
+        renderBoard(data.board, data.last_move);
         updateStatus(data);
     }
 
-    function renderBoard(board) {
+    function renderBoard(board, lastMove = null) {
         const intersections = boardElement.querySelectorAll('.intersection');
         intersections.forEach(inter => {
-            const r = inter.dataset.r;
-            const c = inter.dataset.c;
+            const r = parseInt(inter.dataset.r);
+            const c = parseInt(inter.dataset.c);
             const value = board[r][c];
             
             // Remove existing stone
@@ -64,6 +64,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (value !== 0) {
                 const stone = document.createElement('div');
                 stone.className = `stone ${value === 1 ? 'black' : 'white'}`;
+                
+                // 最新の手を強調表示
+                if (lastMove && lastMove[0] === r && lastMove[1] === c) {
+                    stone.classList.add('last-move');
+                }
+                
                 inter.appendChild(stone);
             }
         });
@@ -116,7 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             const data = await response.json();
             if (data.status === 'success') {
-                renderBoard(data.board);
+                renderBoard(data.board, data.last_move);
                 updateStatus(data);
             } else {
                 messageElement.textContent = data.message;
@@ -132,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (confirm('投了しますか？')) {
             const response = await fetch('/resign', { method: 'POST' });
             const data = await response.json();
-            renderBoard(data.board);
+            renderBoard(data.board, data.last_move);
             updateStatus(data);
         }
     });

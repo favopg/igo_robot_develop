@@ -124,12 +124,14 @@ def index():
 @app.route('/state', methods=['GET'])
 def get_state():
     b_score, w_score = game.score()
+    last_move = game.history[-1][1] if game.history else None
     return jsonify({
         'board': game.board.tolist(),
         'current_player': game.current_player,
         'is_over': game.is_over(),
         'resigned_player': game.resigned_player,
-        'scores': {'black': int(b_score), 'white': int(w_score)}
+        'scores': {'black': int(b_score), 'white': int(w_score)},
+        'last_move': last_move
     })
 
 @app.route('/move', methods=['POST'])
@@ -156,13 +158,15 @@ def move():
             game.play(ai_move[0], ai_move[1])
 
     b_score, w_score = game.score()
+    last_move = game.history[-1][1] if game.history else None
     return jsonify({
         'status': 'success',
         'board': game.board.tolist(),
         'current_player': game.current_player,
         'is_over': game.is_over(),
         'resigned_player': game.resigned_player,
-        'scores': {'black': int(b_score), 'white': int(w_score)}
+        'scores': {'black': int(b_score), 'white': int(w_score)},
+        'last_move': last_move
     })
 
 @app.route('/resign', methods=['POST'])
@@ -170,13 +174,15 @@ def resign():
     # 現在のプレイヤーが投了
     game.resign(game.current_player)
     b_score, w_score = game.score()
+    last_move = game.history[-1][1] if game.history else None
     return jsonify({
         'status': 'success',
         'board': game.board.tolist(),
         'current_player': game.current_player,
         'is_over': game.is_over(),
         'resigned_player': game.resigned_player,
-        'scores': {'black': int(b_score), 'white': int(w_score)}
+        'scores': {'black': int(b_score), 'white': int(w_score)},
+        'last_move': last_move
     })
 
 @app.route('/reset', methods=['POST'])
