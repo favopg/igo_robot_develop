@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>囲碁AI (純碁ルール)</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>囲碁AI対局 (9x9)</h1>
+        <div id="status">
+            <span id="turn-indicator">黒の番です</span>
+            <span id="score">黒: 0, 白: 0</span>
+        </div>
+        <div id="board-container">
+            <div id="go-board">
+                <div id="board-lines"></div>
+                <div id="board-lines-extra"></div>
+                <div id="hoshi-container"></div>
+                <div id="intersections"></div>
+            </div>
+        </div>
+        <div class="controls">
+            <button id="pass-btn">パス</button>
+            <button id="reset-btn">リセット</button>
+        </div>
+        <div id="message"></div>
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+</html>

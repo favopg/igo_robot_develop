@@ -1,0 +1,177 @@
+body {
+    background-color: #f0f0f0;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+}
+
+.container {
+    text-align: center;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+#status {
+    margin-bottom: 10px;
+    font-size: 1.2em;
+}
+
+#turn-indicator {
+    font-weight: bold;
+    margin-right: 20px;
+}
+
+#board-container {
+    background-color: #DEB887;
+    padding: 30px;
+    display: inline-block;
+    border: 2px solid #8B4513;
+    border-radius: 4px;
+}
+
+#go-board {
+    width: 321px;
+    height: 321px;
+    position: relative;
+    user-select: none;
+}
+
+/* 碁盤の線を描画 */
+#board-lines {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+/* 横線 */
+#board-lines::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: linear-gradient(to bottom, black 1px, transparent 1px);
+    background-size: 100% 40px;
+    z-index: 1;
+}
+
+/* 縦線 */
+#board-lines::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: linear-gradient(to right, black 1px, transparent 1px);
+    background-size: 40px 100%;
+    z-index: 1;
+}
+
+/* 最後の線（右と下）を補完 */
+#board-lines-extra {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+}
+
+#board-lines-extra::before {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 1px;
+    background-color: black;
+}
+
+#board-lines-extra::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 1px;
+    height: 100%;
+    background-color: black;
+}
+
+/* 星（星打ち） */
+.hoshi {
+    width: 8px;
+    height: 8px;
+    background-color: black;
+    border-radius: 50%;
+    position: absolute;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+}
+
+/* 交差点（クリック可能領域） */
+#intersections {
+    display: grid;
+    grid-template-columns: repeat(9, 40px);
+    grid-template-rows: repeat(9, 40px);
+    position: absolute;
+    top: -20px;
+    left: -20px;
+    z-index: 4;
+}
+
+.intersection {
+    width: 40px;
+    height: 40px;
+    cursor: pointer;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* 石の描画 */
+.stone {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    z-index: 3;
+    box-shadow: 2px 2px 4px rgba(0,0,0,0.4);
+    pointer-events: none;
+}
+
+.stone.black {
+    background: radial-gradient(circle at 30% 30%, #666, #000);
+}
+
+.stone.white {
+    background: radial-gradient(circle at 30% 30%, #fff, #ccc);
+    border: 1px solid #999;
+}
+
+.controls {
+    margin-top: 20px;
+}
+
+button {
+    padding: 10px 20px;
+    font-size: 1em;
+    cursor: pointer;
+    margin: 0 5px;
+}
+
+#message {
+    margin-top: 15px;
+    color: red;
+    font-weight: bold;
+}
