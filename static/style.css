@@ -159,6 +159,12 @@ body {
     border: 1px solid #999;
 }
 
+/* プレビュー用の石 */
+.stone.preview {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
 .controls {
     margin-top: 20px;
 }

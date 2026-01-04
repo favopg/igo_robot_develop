@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const resetBtn = document.getElementById('reset-btn');
 
     let size = 9;
+    let currentPlayer = 1; // 1: 黒, -1: 白
 
     function createBoard() {
         boardElement.innerHTML = '';
@@ -19,6 +20,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 intersection.dataset.r = r;
                 intersection.dataset.c = c;
                 intersection.addEventListener('click', () => handleMove(r, c));
+                
+                // プレビュー機能の追加
+                intersection.addEventListener('mouseenter', () => showPreview(intersection));
+                intersection.addEventListener('mouseleave', () => removePreview(intersection));
+                
                 boardElement.appendChild(intersection);
             }
         }
@@ -64,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateStatus(data) {
+        currentPlayer = data.current_player;
         turnIndicator.textContent = data.is_over ? '終局' : (data.current_player === 1 ? '黒の番です' : '白の番です');
         scoreIndicator.textContent = `黒: ${data.scores.black}, 白: ${data.scores.white}`;
         if (data.is_over) {
@@ -79,7 +86,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function showPreview(intersection) {
+        // すでに石がある場合や、自分の番でない（AIの思考中など）場合は表示しない
+        if (intersection.querySelector('.stone') || currentPlayer !== 1) {
+            return;
+        }
+        const stone = document.createElement('div');
+        stone.className = `stone black preview`;
+        intersection.appendChild(stone);
+    }
+
+    function removePreview(intersection) {
+        const previewStone = intersection.querySelector('.stone.preview');
+        if (previewStone) {
+            previewStone.remove();
+        }
+    }
+
     async function handleMove(r, c) {
+        // 着手時にプレビューを削除
+        const intersections = boardElement.querySelectorAll('.intersection');
+        intersections.forEach(inter => removePreview(inter));
+
         try {
             const response = await fetch('/move', {
                 method: 'POST',
