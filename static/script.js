@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const passBtn = document.getElementById('pass-btn');
     const resignBtn = document.getElementById('resign-btn');
     const resetBtn = document.getElementById('reset-btn');
+    const modelSelect = document.getElementById('model-select');
+    const startGameBtn = document.getElementById('start-game-btn');
 
     let size = 9;
     let currentPlayer = 1; // 1: 黒, -1: 白
@@ -41,6 +43,22 @@ document.addEventListener('DOMContentLoaded', () => {
             hoshi.style.left = `${c * 40}px`;
             hoshiContainer.appendChild(hoshi);
         });
+    }
+
+    async function loadModels() {
+        try {
+            const response = await fetch('/models');
+            const models = await response.json();
+            modelSelect.innerHTML = '';
+            models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model;
+                option.textContent = model;
+                modelSelect.appendChild(option);
+            });
+        } catch (error) {
+            console.error('Failed to load models', error);
+        }
     }
 
     async function updateState() {
@@ -144,8 +162,36 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     resetBtn.addEventListener('click', async () => {
-        await fetch('/reset', { method: 'POST' });
-        updateState();
+        if (confirm('現在の対局をリセットしますか？')) {
+            await fetch('/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            updateState();
+        }
+    });
+
+    startGameBtn.addEventListener('click', async () => {
+        const model = modelSelect.value;
+        if (confirm(`モデル「${model}」で新しい対局を開始しますか？`)) {
+            const response = await fetch('/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model })
+            });
+            const data = await response.json();
+            if (data.status === 'success') {
+                updateState();
+                messageElement.textContent = '新しい対局を開始しました。';
+                messageElement.style.color = 'green';
+                setTimeout(() => {
+                    messageElement.style.color = '';
+                }, 3000);
+            } else {
+                alert('エラー: ' + data.message);
+            }
+        }
     });
 
     // 機械学習機能の制御
@@ -210,5 +256,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     createBoard();
+    loadModels();
     updateState();
 });

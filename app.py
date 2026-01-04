@@ -113,12 +113,33 @@ class KataGoAI:
         r = 9 - int(coord[1:])
         return r, c
 
-katago_path = r"C:\katago\katago.exe"
-model_path = r"C:\katago\kata1-b10c128-s1141046784-d204142634.txt.gz"
-config_path = r"C:\katago\default_gtp.cfg"
-sgf_dir = os.path.join(os.getcwd(), "SGF")
+# 定数
+KATAGO_PATH = r"C:\katago\katago.exe"
+DEFAULT_MODEL_PATH = r"C:\katago\kata1-b10c128-s1141046784-d204142634.txt.gz"
+CONFIG_PATH = r"C:\katago\default_gtp.cfg"
+STUDY_MODEL_DIR = r"C:\katago\study_model"
+SGF_DIR = os.path.join(os.getcwd(), "SGF")
 
-ai = KataGoAI(GoGame.WHITE, katago_path, model_path, config_path)
+katago_path = KATAGO_PATH
+model_path = DEFAULT_MODEL_PATH
+config_path = CONFIG_PATH
+sgf_dir = SGF_DIR
+
+ai = None # 初期状態ではNone
+
+def get_ai_instance(m_path=None):
+    global ai, model_path
+    if m_path:
+        model_path = m_path
+    if ai is None or ai.model_path != model_path:
+        if ai:
+            # 既存のプロセスを終了させる
+            try:
+                ai.proc.terminate()
+            except:
+                pass
+        ai = KataGoAI(GoGame.WHITE, katago_path, model_path, config_path)
+    return ai
 
 # 学習状態を保持するグローバル変数
 training_status = {
@@ -184,7 +205,7 @@ def run_training_task(mode):
 
         # モデルパスを更新し、AIを再起動
         model_path = target_model
-        ai = KataGoAI(GoGame.WHITE, katago_path, model_path, config_path)
+        get_ai_instance(model_path)
 
         # 完了処理
         training_status["progress"] = 100
@@ -217,6 +238,17 @@ def train():
 def get_train_status():
     return jsonify(training_status)
 
+@app.route('/models', methods=['GET'])
+def get_models():
+    models = [os.path.basename(DEFAULT_MODEL_PATH)]
+    if os.path.exists(STUDY_MODEL_DIR):
+        study_models = [f for f in os.listdir(STUDY_MODEL_DIR) if f.endswith(".gz")]
+        # 重複を避ける（デフォルトモデルがstudy_model配下にある場合も考慮）
+        for sm in study_models:
+            if sm not in models:
+                models.append(sm)
+    return jsonify(models)
+
 @app.route('/state', methods=['GET'])
 def get_state():
     b_score, w_score = game.score()
@@ -247,7 +279,8 @@ def move():
 
     # ゲームが終了していなければAI（白）の手
     if not game.is_over() and game.current_player == GoGame.WHITE:
-        ai_move = ai.get_move(game)
+        current_ai = get_ai_instance()
+        ai_move = current_ai.get_move(game)
         if ai_move is None:
             game.play(None, None)
         else:
@@ -284,6 +317,24 @@ def resign():
 @app.route('/reset', methods=['POST'])
 def reset():
     global game
+    data = request.json
+    selected_model = data.get('model')
+    
+    if selected_model:
+        # モデルパスを決定する
+        if selected_model == os.path.basename(DEFAULT_MODEL_PATH):
+            m_path = DEFAULT_MODEL_PATH
+        else:
+            m_path = os.path.join(STUDY_MODEL_DIR, selected_model)
+        
+        if os.path.exists(m_path):
+            get_ai_instance(m_path)
+        else:
+            return jsonify({'status': 'error', 'message': f'Model not found: {selected_model}'}), 404
+    else:
+        # モデルが指定されない場合は現在のモデルでAIを初期化（まだ存在しない場合）
+        get_ai_instance()
+
     game = GoGame(size=9)
     return jsonify({'status': 'success'})
 

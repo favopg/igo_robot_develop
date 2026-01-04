@@ -22,9 +22,16 @@
             </div>
         </div>
         <div class="controls">
-            <button id="pass-btn">パス</button>
-            <button id="resign-btn">投了</button>
-            <button id="reset-btn">リセット</button>
+            <div class="model-selection">
+                <label for="model-select">対局相手AIモデル:</label>
+                <select id="model-select"></select>
+                <button id="start-game-btn" class="primary-btn">対局開始</button>
+            </div>
+            <div class="game-btns">
+                <button id="pass-btn">パス</button>
+                <button id="resign-btn">投了</button>
+                <button id="reset-btn">リセット</button>
+            </div>
         </div>
         <div id="message"></div>
 
