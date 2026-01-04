@@ -27,6 +27,27 @@
             <button id="reset-btn">リセット</button>
         </div>
         <div id="message"></div>
+
+        <hr>
+        <div class="training-section">
+            <h2>機械学習設定</h2>
+            <p>SGFディレクトリの棋譜を元にモデルを学習します。</p>
+            <div class="training-controls">
+                <label>
+                    <input type="radio" name="train-mode" value="overwrite" checked> 上書き学習 (現行ベース)
+                </label>
+                <label>
+                    <input type="radio" name="train-mode" value="new"> 新規学習 (ゼロベース)
+                </label>
+                <button id="train-start-btn">学習開始</button>
+            </div>
+            <div id="training-progress-container" style="display: none;">
+                <div class="progress-bar-bg">
+                    <div id="training-progress-bar" style="width: 0%;"></div>
+                </div>
+                <div id="training-message">学習準備中...</div>
+            </div>
+        </div>
     </div>
     <script src="/static/script.js"></script>
 </body>

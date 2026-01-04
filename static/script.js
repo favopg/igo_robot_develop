@@ -148,6 +148,67 @@ document.addEventListener('DOMContentLoaded', () => {
         updateState();
     });
 
+    // 機械学習機能の制御
+    const trainStartBtn = document.getElementById('train-start-btn');
+    const trainProgressContainer = document.getElementById('training-progress-container');
+    const trainProgressBar = document.getElementById('training-progress-bar');
+    const trainMessage = document.getElementById('training-message');
+
+    trainStartBtn.addEventListener('click', async () => {
+        const mode = document.querySelector('input[name="train-mode"]:checked').value;
+        
+        if (!confirm(`${mode === 'new' ? '新規モデル' : '既存モデル上書き'}で学習を開始しますか？`)) {
+            return;
+        }
+
+        trainStartBtn.disabled = true;
+        trainProgressContainer.style.display = 'block';
+        
+        try {
+            const response = await fetch('/train', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode })
+            });
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                // 進捗ポーリング開始
+                pollTrainingStatus();
+            } else {
+                alert(data.message);
+                trainStartBtn.disabled = false;
+            }
+        } catch (error) {
+            console.error('Training start failed', error);
+            trainStartBtn.disabled = false;
+        }
+    });
+
+    function pollTrainingStatus() {
+        const interval = setInterval(async () => {
+            try {
+                const response = await fetch('/train_status');
+                const data = await response.json();
+                
+                trainProgressBar.style.width = `${data.progress}%`;
+                trainMessage.textContent = data.message;
+                
+                if (!data.is_training) {
+                    clearInterval(interval);
+                    trainStartBtn.disabled = false;
+                    if (data.progress === 100) {
+                        alert('学習が完了しました！');
+                    }
+                }
+            } catch (error) {
+                console.error('Polling failed', error);
+                clearInterval(interval);
+                trainStartBtn.disabled = false;
+            }
+        }, 1000);
+    }
+
     createBoard();
     updateState();
 });
