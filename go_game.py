@@ -12,6 +12,7 @@ class GoGame:
         self.ko_square = None
         self.pass_count = 0
         self.history = []
+        self.resigned_player = None
 
     def get_liberties(self, r, c):
         color = self.board[r, c]
@@ -95,10 +96,21 @@ class GoGame:
         self.current_player *= -1
         return True
 
+    def resign(self, player):
+        self.resigned_player = player
+        return True
+
     def is_over(self):
-        return self.pass_count >= 2
+        return self.pass_count >= 2 or self.resigned_player is not None
 
     def score(self):
+        if self.resigned_player is not None:
+            # 投了した場合、投了した側の石数を0、相手を1（または適当な勝利判定可能な値）にするか
+            # あるいはスコア計算自体は通常通り行い、UI側で判定する。
+            # 今回は純碁ルール（石数）なので、投了した場合は相手の勝ちであることを明確にするため
+            # 極端なスコアを返すか、別途勝者判定を設けるのが良い。
+            # ここではスコア計算はそのままにし、is_overとresigned_playerで判定することにする。
+            pass
         # Jungo rules: count stones on board
         black_stones = np.sum(self.board == self.BLACK)
         white_stones = np.sum(self.board == self.WHITE)

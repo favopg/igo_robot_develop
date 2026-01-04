@@ -128,6 +128,7 @@ def get_state():
         'board': game.board.tolist(),
         'current_player': game.current_player,
         'is_over': game.is_over(),
+        'resigned_player': game.resigned_player,
         'scores': {'black': int(b_score), 'white': int(w_score)}
     })
 
@@ -160,6 +161,21 @@ def move():
         'board': game.board.tolist(),
         'current_player': game.current_player,
         'is_over': game.is_over(),
+        'resigned_player': game.resigned_player,
+        'scores': {'black': int(b_score), 'white': int(w_score)}
+    })
+
+@app.route('/resign', methods=['POST'])
+def resign():
+    # 現在のプレイヤーが投了
+    game.resign(game.current_player)
+    b_score, w_score = game.score()
+    return jsonify({
+        'status': 'success',
+        'board': game.board.tolist(),
+        'current_player': game.current_player,
+        'is_over': game.is_over(),
+        'resigned_player': game.resigned_player,
         'scores': {'black': int(b_score), 'white': int(w_score)}
     })
 

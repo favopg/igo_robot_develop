@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const scoreIndicator = document.getElementById('score');
     const messageElement = document.getElementById('message');
     const passBtn = document.getElementById('pass-btn');
+    const resignBtn = document.getElementById('resign-btn');
     const resetBtn = document.getElementById('reset-btn');
 
     let size = 9;
@@ -66,7 +67,12 @@ document.addEventListener('DOMContentLoaded', () => {
         turnIndicator.textContent = data.is_over ? '終局' : (data.current_player === 1 ? '黒の番です' : '白の番です');
         scoreIndicator.textContent = `黒: ${data.scores.black}, 白: ${data.scores.white}`;
         if (data.is_over) {
-            const winner = data.scores.black > data.scores.white ? '黒の勝ち' : (data.scores.white > data.scores.black ? '白の勝ち' : '引き分け');
+            let winner = '';
+            if (data.resigned_player !== null) {
+                winner = data.resigned_player === 1 ? '白の勝ち (黒の投了)' : '黒の勝ち (白の投了)';
+            } else {
+                winner = data.scores.black > data.scores.white ? '黒の勝ち' : (data.scores.white > data.scores.black ? '白の勝ち' : '引き分け');
+            }
             messageElement.textContent = `ゲーム終了！ ${winner}`;
         } else {
             messageElement.textContent = '';
@@ -93,6 +99,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     passBtn.addEventListener('click', () => handleMove(null, null));
+
+    resignBtn.addEventListener('click', async () => {
+        if (confirm('投了しますか？')) {
+            const response = await fetch('/resign', { method: 'POST' });
+            const data = await response.json();
+            renderBoard(data.board);
+            updateStatus(data);
+        }
+    });
 
     resetBtn.addEventListener('click', async () => {
         await fetch('/reset', { method: 'POST' });
