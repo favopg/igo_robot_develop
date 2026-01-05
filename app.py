@@ -314,16 +314,18 @@ class ResBlock(nn.Module):
         return out
 
 class SimpleGoNet(nn.Module):
-    def __init__(self, size=9, channels=32):
+    def __init__(self, size=9, channels=32, num_blocks=10):
         super(SimpleGoNet, self).__init__()
         self.size = size
         self.channels = channels
+        self.num_blocks = num_blocks
+        
         # 入力層
         self.conv_input = nn.Conv2d(3, channels, kernel_size=3, padding=1, bias=False)
         self.bn_input = nn.BatchNorm2d(channels)
         
-        # 1つの残差ブロック (trunk)
-        self.res1 = ResBlock(channels)
+        # 残差ブロックのリスト (10ブロック)
+        self.res_blocks = nn.ModuleList([ResBlock(channels) for _ in range(num_blocks)])
         
         # Policy Head
         self.policy_conv = nn.Conv2d(channels, 2, kernel_size=1)
@@ -336,7 +338,10 @@ class SimpleGoNet(nn.Module):
 
     def forward(self, x):
         x = F.relu(self.bn_input(self.conv_input(x)))
-        x = self.res1(x)
+        
+        # 10個の残差ブロックを順に適用
+        for res_block in self.res_blocks:
+            x = res_block(x)
         
         # Policy
         p = self.policy_conv(x)
@@ -365,7 +370,7 @@ def save_model_as_katago(model, filename):
     # 重みを取得
     state_dict = model.state_dict()
     
-    # KataGo v8/v9 形式のヘッダー (1 block, 32 channels)
+    # KataGo v8/v9 形式のヘッダー (10 blocks, 32 channels)
     # 形式: name \n version \n num_input_features \n board_size \n ...
     lines = []
     lines.append("simple_sl_model") # model name
