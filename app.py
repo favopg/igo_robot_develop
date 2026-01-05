@@ -41,7 +41,7 @@ class SimplePyTorchAI:
         input_tensor = torch.tensor(np.array([board_tensor]), dtype=torch.float32).to(self.device)
         
         with torch.no_grad():
-            output = self.model(input_tensor)
+            output, _ = self.model(input_tensor)
             probabilities = F.softmax(output, dim=1).cpu().numpy()[0]
         
         # 合法手のみを選択（簡易的に空点 + パス）
@@ -104,7 +104,10 @@ class KataGoAI:
                 bufsize=1
             )
         except OSError as e:
-            print(f"Failed to start KataGo: {e}")
+            print(f"Failed to start KataGo at {self.katago_path}: {e}")
+            raise RuntimeError(f"KataGoの起動に失敗しました。パスが正しいか確認してください: {self.katago_path} (Error: {e})")
+        except Exception as e:
+            print(f"An unexpected error occurred when starting KataGo: {e}")
             raise e
         # 初期ルール設定
         # KataGoのカスタムコマンドでルールを設定
@@ -187,6 +190,111 @@ CONFIG_PATH = r"C:\katago\default_gtp.cfg"
 STUDY_MODEL_DIR = r"C:\katago\study_model"
 SGF_DIR = os.path.join(os.getcwd(), "SGF")
 
+# --- MCTSの導入 ---
+class MCTSNode:
+    def __init__(self, game, parent=None, move=None, prior=0):
+        self.game = game
+        self.parent = parent
+        self.move = move
+        self.prior = prior
+        self.children = {}
+        self.visit_count = 0
+        self.value_sum = 0
+        self.state_value = 0
+
+    @property
+    def value(self):
+        return self.value_sum / self.visit_count if self.visit_count > 0 else 0
+
+    def select_child(self, c_puct):
+        best_score = -float('inf')
+        best_move = None
+        best_child = None
+
+        for move, child in self.children.items():
+            u_score = c_puct * child.prior * np.sqrt(self.visit_count) / (1 + child.visit_count)
+            score = child.value + u_score
+            if score > best_score:
+                best_score = score
+                best_move = move
+                best_child = child
+        return best_move, best_child
+
+    def expand(self, action_probs):
+        for move, prob in action_probs:
+            if move not in self.children:
+                new_game = self.game.copy()
+                if move is None:
+                    new_game.play(None, None)
+                else:
+                    new_game.play(move[0], move[1])
+                self.children[move] = MCTSNode(new_game, parent=self, move=move, prior=prob)
+
+    def update(self, value):
+        self.visit_count += 1
+        self.value_sum += value
+        if self.parent:
+            self.parent.update(-value)
+
+def run_mcts(game, model, device, num_simulations=50, c_puct=1.0):
+    root = MCTSNode(game)
+    
+    # 最初の展開
+    color_char = 'b' if game.current_player == GoGame.BLACK else 'w'
+    board_tensor = board_to_tensor(game_to_sgfmill_board(game), color_char)
+    input_tensor = torch.tensor(np.array([board_tensor]), dtype=torch.float32).to(device)
+    
+    with torch.no_grad():
+        policy_logits, value = model(input_tensor)
+        probs = F.softmax(policy_logits, dim=1).cpu().numpy()[0]
+        v = value.item()
+
+    valid_moves = game.get_valid_moves()
+    action_probs = []
+    for mv in valid_moves:
+        idx = 81 if mv is None else mv[0] * 9 + mv[1]
+        action_probs.append((mv, probs[idx]))
+    
+    root.expand(action_probs)
+    
+    for _ in range(num_simulations):
+        node = root
+        # Selection
+        while node.children:
+            move, node = node.select_child(c_puct)
+        
+        # Expansion & Evaluation
+        if not node.game.is_over():
+            color_char = 'b' if node.game.current_player == GoGame.BLACK else 'w'
+            board_tensor = board_to_tensor(game_to_sgfmill_board(node.game), color_char)
+            input_tensor = torch.tensor(np.array([board_tensor]), dtype=torch.float32).to(device)
+            
+            with torch.no_grad():
+                policy_logits, value = model(input_tensor)
+                probs = F.softmax(policy_logits, dim=1).cpu().numpy()[0]
+                v = value.item()
+            
+            valid_moves = node.game.get_valid_moves()
+            action_probs = []
+            for mv in valid_moves:
+                idx = 81 if mv is None else mv[0] * 9 + mv[1]
+                action_probs.append((mv, probs[idx]))
+            node.expand(action_probs)
+        else:
+            # 終局時の評価（純碁ルール: 石数差）
+            b, w = node.game.score()
+            if node.game.current_player == GoGame.BLACK:
+                v = 1.0 if b > w else (-1.0 if w > b else 0)
+            else:
+                v = 1.0 if w > b else (-1.0 if b > w else 0)
+        
+        # Backpropagation
+        node.update(v)
+        
+    # 最も訪問回数が多い手を選択
+    best_move = max(root.children.items(), key=lambda x: x[1].visit_count)[0]
+    return best_move
+
 # --- 教師あり学習 (SL) 用のネットワーク定義 ---
 # KataGo互換の最小限のResNet構造を目指します
 class ResBlock(nn.Module):
@@ -231,17 +339,17 @@ class SimpleGoNet(nn.Module):
         x = self.res1(x)
         
         # Policy
-        p = F.relu(self.policy_conv(x))
+        p = self.policy_conv(x)
         p = p.view(-1, 2 * self.size * self.size)
         p = self.policy_fc(p)
         
-        # Value (今回はPolicy学習メインですが定義だけしておきます)
+        # Value
         v = F.relu(self.value_conv(x))
         v = v.view(-1, self.size * self.size)
         v = F.relu(self.value_fc1(v))
         v = torch.tanh(self.value_fc2(v))
         
-        return p
+        return p, v
 
 def save_model_as_katago(model, filename):
     """
@@ -370,7 +478,7 @@ def get_ai_instance(m_path=None):
         # モデルファイル形式に応じてAIクラスを選択
         if model_path.endswith(".pt"):
             ai = SimplePyTorchAI(GoGame.WHITE, model_path)
-        elif "model_sl_" in model_path and model_path.endswith(".txt.gz"):
+        elif ("model_sl_" in model_path or "model_rl_" in model_path) and model_path.endswith(".txt.gz"):
             # 自作モデルの.txt.gzもPyTorchで読み込む（元となる.ptファイルを探す）
             pt_path = model_path.replace(".txt.gz", ".pt")
             if os.path.exists(pt_path):
@@ -389,6 +497,49 @@ training_status = {
     "progress": 0,
     "message": "学習は開始されていません"
 }
+
+def run_self_play(model, num_games=100):
+    """モデルを使用して自戦対局を行い、SGFファイルを保存します。"""
+    global training_status
+    selfplay_dir = "selfplay_sgf"
+    if not os.path.exists(selfplay_dir):
+        os.makedirs(selfplay_dir)
+        
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.eval()
+    
+    for i in range(num_games):
+        game_obj = GoGame(size=9)
+        sgf_game = sgf.Sgf_game(size=9)
+        
+        # 対局ループ
+        while not game_obj.is_over():
+            color_char = 'b' if game_obj.current_player == GoGame.BLACK else 'w'
+            
+            # MCTSを使用して次の手を選択
+            move = run_mcts(game_obj, model, device, num_simulations=50)
+            
+            game_obj.play(move[0], move[1]) if move else game_obj.play(None, None)
+            
+            # SGFに記録
+            node = sgf_game.extend_main_sequence()
+            node.set_move(color_char, move)
+            
+            if len(game_obj.history) > 300: # 無限ループ防止
+                break
+        
+        # SGF保存
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"selfplay_{timestamp}_{i}.sgf"
+        with open(os.path.join(selfplay_dir, filename), "wb") as f:
+            f.write(sgf_game.serialise())
+            
+        if (i + 1) % 10 == 0 or i == 0:
+            training_status["progress"] = 40 + int((i + 1) / num_games * 30)
+            training_status["message"] = f"自戦対局中... {i+1}/{num_games} 局完了"
+            print(f"Self-play: {i+1}/{num_games} games done")
+
+    return selfplay_dir
 
 def run_training_task(mode):
     global training_status, model_path, ai
@@ -422,30 +573,63 @@ def run_training_task(mode):
         dataset = torch.utils.data.TensorDataset(X, y)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=True)
         
-        epochs = 5
+        epochs = 10
         for epoch in range(epochs):
             model.train()
             total_loss = 0
             for batch_idx, (data, target) in enumerate(dataloader):
                 optimizer.zero_grad()
-                output = model(data)
+                output, _ = model(data)
                 loss = criterion(output, target)
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
             
             avg_loss = total_loss / len(dataloader)
-            training_status["progress"] = 20 + int((epoch + 1) / epochs * 70)
-            training_status["message"] = f"学習中... Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}"
-            print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+            training_status["progress"] = 5 + int((epoch + 1) / epochs * 35)
+            training_status["message"] = f"教師あり学習中... Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}"
+            print(f"SL Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
 
-        # モデルの保存
+        # 2. 自戦対局によるデータ収集
+        training_status["progress"] = 40
+        training_status["message"] = "モンテカルロ木探索（MCTS）を用いた自戦対局を開始します (100局)..."
+        selfplay_dir = run_self_play(model, num_games=100)
+
+        # 3. 強化学習 (自戦対局データによる追加学習)
+        training_status["progress"] = 70
+        training_status["message"] = "自戦対局データで強化学習中..."
+        
+        features_rl, labels_rl = load_sgf_data(selfplay_dir)
+        if features_rl:
+            X_rl = torch.tensor(np.array(features_rl), dtype=torch.float32).to(device)
+            y_rl = torch.tensor(np.array(labels_rl), dtype=torch.long).to(device)
+            dataset_rl = torch.utils.data.TensorDataset(X_rl, y_rl)
+            dataloader_rl = torch.utils.data.DataLoader(dataset_rl, batch_size=32, shuffle=True)
+            
+            rl_epochs = 5
+            for epoch in range(rl_epochs):
+                model.train()
+                total_loss = 0
+                for batch_idx, (data, target) in enumerate(dataloader_rl):
+                    optimizer.zero_grad()
+                    output, _ = model(data)
+                    loss = criterion(output, target)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+                
+                avg_loss = total_loss / len(dataloader_rl)
+                training_status["progress"] = 70 + int((epoch + 1) / rl_epochs * 20)
+                training_status["message"] = f"強化学習中... Epoch {epoch+1}/{rl_epochs}, Loss: {avg_loss:.4f}"
+                print(f"RL Epoch {epoch+1}/{rl_epochs}, Loss: {avg_loss:.4f}")
+
+        # 4. 最終モデルの保存
         if not os.path.exists(STUDY_MODEL_DIR):
             os.makedirs(STUDY_MODEL_DIR)
             
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_name_pt = f"model_sl_{timestamp}.pt"
-        model_name_gz = f"model_sl_{timestamp}.txt.gz"
+        model_name_pt = f"model_rl_{timestamp}.pt"
+        model_name_gz = f"model_rl_{timestamp}.txt.gz"
         
         # PyTorch形式で保存
         save_path_pt = os.path.join(STUDY_MODEL_DIR, model_name_pt)
@@ -456,7 +640,7 @@ def run_training_task(mode):
 
         training_status["progress"] = 100
         training_status["is_training"] = False
-        training_status["message"] = f"教師あり学習が完了しました。モデル保存先: {model_name_gz}"
+        training_status["message"] = f"教師学習および100局の自戦対局による強化学習が完了しました。モデル: {model_name_gz}"
         
     except Exception as e:
         import traceback

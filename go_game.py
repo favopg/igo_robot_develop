@@ -150,6 +150,16 @@ class GoGame:
                 return False
         return True
 
+    def copy(self):
+        new_game = GoGame(size=self.size)
+        new_game.board = self.board.copy()
+        new_game.current_player = self.current_player
+        new_game.ko_square = self.ko_square
+        new_game.pass_count = self.pass_count
+        new_game.history = list(self.history)
+        new_game.resigned_player = self.resigned_player
+        return new_game
+
     def __str__(self):
         res = "  " + " ".join(str(i + 1) for i in range(self.size)) + "\n"
         for r in range(self.size):
