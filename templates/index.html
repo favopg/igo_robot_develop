@@ -54,6 +54,27 @@
                 </div>
                 <div id="training-message">学習準備中...</div>
             </div>
+
+            <hr>
+            <h3>自戦対局</h3>
+            <p>選択したモデルで自己対局を行い、学習データを生成します。</p>
+            <div class="selfplay-controls">
+                <label for="selfplay-games-select">対局数:</label>
+                <select id="selfplay-games-select">
+                    <option value="1">1局</option>
+                    <option value="10">10局</option>
+                    <option value="100" selected>100局</option>
+                    <option value="1000">1000局</option>
+                    <option value="10000">10000局</option>
+                </select>
+                <button id="selfplay-start-btn">自戦対局開始</button>
+            </div>
+            <div id="selfplay-progress-container" style="display: none;">
+                <div class="progress-bar-bg">
+                    <div id="selfplay-progress-bar" style="width: 0%;"></div>
+                </div>
+                <div id="selfplay-message">準備中...</div>
+            </div>
         </div>
     </div>
     <script src="/static/script.js"></script>

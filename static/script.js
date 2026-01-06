@@ -255,6 +255,52 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 1000);
     }
 
+    // 自戦対局機能の制御
+    const selfplayStartBtn = document.getElementById('selfplay-start-btn');
+    const selfplayGamesSelect = document.getElementById('selfplay-games-select');
+    const selfplayProgressContainer = document.getElementById('selfplay-progress-container');
+    const selfplayProgressBar = document.getElementById('selfplay-progress-bar');
+    const selfplayMessage = document.getElementById('selfplay-message');
+
+    selfplayStartBtn.addEventListener('click', async () => {
+        const model = modelSelect.value;
+        const numGames = parseInt(selfplayGamesSelect.value);
+        if (!confirm(`モデル「${model}」で自戦対局(${numGames}局)を開始しますか？`)) {
+            return;
+        }
+
+        selfplayStartBtn.disabled = true;
+        selfplayProgressContainer.style.display = 'block';
+
+        try {
+            const response = await fetch('/start_selfplay', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model, num_games: numGames })
+            });
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                selfplayProgressBar.style.width = `100%`;
+                selfplayMessage.textContent = data.message;
+                alert('自戦対局が完了しました！');
+            } else {
+                alert('エラー: ' + data.message);
+                selfplayMessage.textContent = 'エラーが発生しました。';
+            }
+        } catch (error) {
+            console.error('Selfplay execution failed', error);
+            alert('通信エラーが発生しました。');
+        } finally {
+            selfplayStartBtn.disabled = false;
+        }
+    });
+
+    function pollSelfplayStatus() {
+        // 同期処理に変更したため、ポーリングは不要となりましたが、
+        // 既存のコードとの互換性や将来的な拡張のために定義のみ残すか、削除します。
+    }
+
     createBoard();
     loadModels();
     updateState();

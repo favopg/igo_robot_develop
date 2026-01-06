@@ -16,6 +16,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sgfmill import sgf, boards
 
+# 自戦対局スクリプトから必要なクラスと関数をインポート
+from selfplay_main import (
+    SimpleGoNet, ResBlock, MCTSNode, run_mcts, 
+    self_play_worker, board_to_tensor, game_to_sgfmill_board
+)
+
 app = Flask(__name__)
 
 # ゲームのグローバルインスタンス
@@ -191,210 +197,11 @@ CONFIG_PATH = r"C:\katago\default_gtp.cfg"
 STUDY_MODEL_DIR = r"C:\katago\study_model"
 SGF_DIR = os.path.join(os.getcwd(), "SGF")
 
-# --- MCTSの導入 ---
-class MCTSNode:
-    def __init__(self, game, parent=None, move=None, prior=0):
-        self.game = game
-        self.parent = parent
-        self.move = move
-        self.prior = prior
-        self.children = {}
-        self.visit_count = 0
-        self.value_sum = 0
-        self.state_value = 0
-
-    @property
-    def value(self):
-        return self.value_sum / self.visit_count if self.visit_count > 0 else 0
-
-    def select_child(self, c_puct):
-        best_score = -float('inf')
-        best_move = None
-        best_child = None
-
-        for move, child in self.children.items():
-            u_score = c_puct * child.prior * np.sqrt(self.visit_count) / (1 + child.visit_count)
-            score = child.value + u_score
-            if score > best_score:
-                best_score = score
-                best_move = move
-                best_child = child
-        return best_move, best_child
-
-    def expand(self, action_probs):
-        for move, prob in action_probs:
-            if move not in self.children:
-                new_game = self.game.copy()
-                if move is None:
-                    new_game.play(None, None)
-                else:
-                    new_game.play(move[0], move[1])
-                self.children[move] = MCTSNode(new_game, parent=self, move=move, prior=prob)
-
-    def update(self, value):
-        self.visit_count += 1
-        self.value_sum += value
-        if self.parent:
-            self.parent.update(-value)
-
-def run_mcts(game, model, device, num_simulations=50, c_puct=1.0):
-    root = MCTSNode(game)
-    
-    # 最初の展開
-    color_char = 'b' if game.current_player == GoGame.BLACK else 'w'
-    board_tensor = board_to_tensor(game_to_sgfmill_board(game), color_char)
-    input_tensor = torch.tensor(np.array([board_tensor]), dtype=torch.float32).to(device)
-    
-    with torch.no_grad():
-        policy_logits, value = model(input_tensor)
-        probs = F.softmax(policy_logits, dim=1).cpu().numpy()[0]
-        v = value.item()
-
-    valid_moves = game.get_valid_moves()
-    action_probs = []
-    for mv in valid_moves:
-        idx = 81 if mv is None else mv[0] * 9 + mv[1]
-        action_probs.append((mv, probs[idx]))
-    
-    root.expand(action_probs)
-    
-    for _ in range(num_simulations):
-        node = root
-        # Selection
-        while node.children:
-            move, node = node.select_child(c_puct)
-        
-        # Expansion & Evaluation
-        if not node.game.is_over():
-            color_char = 'b' if node.game.current_player == GoGame.BLACK else 'w'
-            board_tensor = board_to_tensor(game_to_sgfmill_board(node.game), color_char)
-            input_tensor = torch.tensor(np.array([board_tensor]), dtype=torch.float32).to(device)
-            
-            with torch.no_grad():
-                policy_logits, value = model(input_tensor)
-                probs = F.softmax(policy_logits, dim=1).cpu().numpy()[0]
-                v = value.item()
-            
-            valid_moves = node.game.get_valid_moves()
-            action_probs = []
-            for mv in valid_moves:
-                idx = 81 if mv is None else mv[0] * 9 + mv[1]
-                action_probs.append((mv, probs[idx]))
-            node.expand(action_probs)
-        else:
-            # 終局時の評価（純碁ルール: 石数差）
-            b, w = node.game.score()
-            if node.game.current_player == GoGame.BLACK:
-                v = 1.0 if b > w else (-1.0 if w > b else 0)
-            else:
-                v = 1.0 if w > b else (-1.0 if b > w else 0)
-        
-        # Backpropagation
-        node.update(v)
-        
-    # 最も訪問回数が多い手を選択
-    best_move = max(root.children.items(), key=lambda x: x[1].visit_count)[0]
-    return best_move
-
-def self_play_worker(model_state, num_games, worker_id, selfplay_dir):
-    """
-    別プロセスで自戦対局を実行するワーカー関数。
-    """
-    import torch
-    from go_game import GoGame
-    from sgfmill import sgf
-    from datetime import datetime
-    import os
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = SimpleGoNet(size=9).to(device)
-    model.load_state_dict(model_state)
-    model.eval()
-
-    results = []
-    for i in range(num_games):
-        game_obj = GoGame(size=9)
-        sgf_game = sgf.Sgf_game(size=9)
-        
-        while not game_obj.is_over():
-            color_char = 'b' if game_obj.current_player == GoGame.BLACK else 'w'
-            move = run_mcts(game_obj, model, device, num_simulations=50)
-            game_obj.play(move[0], move[1]) if move else game_obj.play(None, None)
-            
-            node = sgf_game.extend_main_sequence()
-            node.set_move(color_char, move)
-            
-            if len(game_obj.history) > 300:
-                break
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"selfplay_{timestamp}_w{worker_id}_{i}.sgf"
-        save_path = os.path.join(selfplay_dir, filename)
-        with open(save_path, "wb") as f:
-            f.write(sgf_game.serialise())
-        results.append(save_path)
-    return results
+# --- MCTS ロジック ---
+# selfplay_main からインポート済み
 
 # --- 教師あり学習 (SL) 用のネットワーク定義 ---
-# KataGo互換の最小限のResNet構造を目指します
-class ResBlock(nn.Module):
-    def __init__(self, channels):
-        super(ResBlock, self).__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(channels)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(channels)
-
-    def forward(self, x):
-        residual = x
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out += residual
-        out = F.relu(out)
-        return out
-
-class SimpleGoNet(nn.Module):
-    def __init__(self, size=9, channels=32, num_blocks=10):
-        super(SimpleGoNet, self).__init__()
-        self.size = size
-        self.channels = channels
-        self.num_blocks = num_blocks
-        
-        # 入力層
-        self.conv_input = nn.Conv2d(3, channels, kernel_size=3, padding=1, bias=False)
-        self.bn_input = nn.BatchNorm2d(channels)
-        
-        # 残差ブロックのリスト (10ブロック)
-        self.res_blocks = nn.ModuleList([ResBlock(channels) for _ in range(num_blocks)])
-        
-        # Policy Head
-        self.policy_conv = nn.Conv2d(channels, 2, kernel_size=1)
-        self.policy_fc = nn.Linear(2 * size * size, size * size + 1)
-        
-        # Value Head
-        self.value_conv = nn.Conv2d(channels, 1, kernel_size=1)
-        self.value_fc1 = nn.Linear(size * size, 64)
-        self.value_fc2 = nn.Linear(64, 1)
-
-    def forward(self, x):
-        x = F.relu(self.bn_input(self.conv_input(x)))
-        
-        # 10個の残差ブロックを順に適用
-        for res_block in self.res_blocks:
-            x = res_block(x)
-        
-        # Policy
-        p = self.policy_conv(x)
-        p = p.view(-1, 2 * self.size * self.size)
-        p = self.policy_fc(p)
-        
-        # Value
-        v = F.relu(self.value_conv(x))
-        v = v.view(-1, self.size * self.size)
-        v = F.relu(self.value_fc1(v))
-        v = torch.tanh(self.value_fc2(v))
-        
-        return p, v
+# selfplay_main からインポート済み
 
 def save_model_as_katago(model, filename):
     """
@@ -440,24 +247,8 @@ def save_model_as_katago(model, filename):
             data = param.cpu().numpy().flatten()
             f.write(" ".join(map(str, data)) + "\n")
 
-def board_to_tensor(board_obj, color):
-    # sgfmillのboardオブジェクトをTensorに変換
-    # 0: 自分の石, 1: 相手の石, 2: 手番 (1なら黒, 0なら白)
-    size = board_obj.side
-    tensor = np.zeros((3, size, size), dtype=np.float32)
-    
-    for r in range(size):
-        for c in range(size):
-            p = board_obj.get(r, c)
-            if p == color:
-                tensor[0, r, c] = 1.0
-            elif p is not None:
-                tensor[1, r, c] = 1.0
-    
-    if color == 'b':
-        tensor[2, :, :] = 1.0
-    
-    return tensor
+# --- 補助関数 ---
+# board_to_tensor は selfplay_main からインポート済み
 
 def get_symmetries(tensor, label, size=9):
     """
@@ -597,9 +388,19 @@ training_status = {
     "message": "学習は開始されていません"
 }
 
-def run_self_play(model, num_games=100):
+# 自戦対局状態を保持するグローバル変数
+selfplay_status = {
+    "is_running": False,
+    "progress": 0,
+    "message": "自戦対局は開始されていません"
+}
+
+def run_self_play(model, num_games=100, status_dict=None):
     """モデルを使用して自戦対局を行い、SGFファイルを保存します（並列化版）。"""
-    global training_status
+    if status_dict is None:
+        global training_status
+        status_dict = training_status
+
     selfplay_dir = "selfplay_sgf"
     if not os.path.exists(selfplay_dir):
         os.makedirs(selfplay_dir)
@@ -640,8 +441,11 @@ def run_self_play(model, num_games=100):
             # 進捗更新 (UI用)
             # 暫定的に1局終わるごとにカウントを増やしたいが、非同期なので難しい。
             # 今回はタスク完了数で更新するか、ファイル増分を見る。
-            training_status["progress"] = 40 + int((completed_tasks / len(tasks)) * 30)
-            training_status["message"] = f"並列自戦対局中... {completed_tasks}/{len(tasks)} タスク完了"
+            if status_dict == training_status:
+                status_dict["progress"] = 40 + int((completed_tasks / len(tasks)) * 30)
+            else:
+                status_dict["progress"] = int((completed_tasks / len(tasks)) * 100)
+            status_dict["message"] = f"並列自戦対局中... {completed_tasks}/{len(tasks)} タスク完了"
 
     print("Parallel self-play completed.")
     return selfplay_dir
@@ -695,40 +499,7 @@ def run_training_task(mode):
             training_status["message"] = f"教師あり学習中... Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}"
             print(f"SL Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
 
-        # 2. 自戦対局によるデータ収集
-        training_status["progress"] = 40
-        training_status["message"] = "モンテカルロ木探索（MCTS）を用いた自戦対局を開始します (1局)..."
-        selfplay_dir = run_self_play(model, num_games=1)
-
-        # 3. 強化学習 (自戦対局データによる追加学習)
-        training_status["progress"] = 70
-        training_status["message"] = "自戦対局データで強化学習中..."
-        
-        features_rl, labels_rl = load_sgf_data(selfplay_dir)
-        if features_rl:
-            X_rl = torch.tensor(np.array(features_rl), dtype=torch.float32).to(device)
-            y_rl = torch.tensor(np.array(labels_rl), dtype=torch.long).to(device)
-            dataset_rl = torch.utils.data.TensorDataset(X_rl, y_rl)
-            dataloader_rl = torch.utils.data.DataLoader(dataset_rl, batch_size=32, shuffle=True)
-            
-            rl_epochs = 5
-            for epoch in range(rl_epochs):
-                model.train()
-                total_loss = 0
-                for batch_idx, (data, target) in enumerate(dataloader_rl):
-                    optimizer.zero_grad()
-                    output, _ = model(data)
-                    loss = criterion(output, target)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
-                
-                avg_loss = total_loss / len(dataloader_rl)
-                training_status["progress"] = 70 + int((epoch + 1) / rl_epochs * 20)
-                training_status["message"] = f"強化学習中... Epoch {epoch+1}/{rl_epochs}, Loss: {avg_loss:.4f}"
-                print(f"RL Epoch {epoch+1}/{rl_epochs}, Loss: {avg_loss:.4f}")
-
-        # 4. 最終モデルの保存
+        # 2. 最終モデルの保存
         if not os.path.exists(STUDY_MODEL_DIR):
             os.makedirs(STUDY_MODEL_DIR)
             
@@ -767,8 +538,8 @@ def run_training_task(mode):
 
         if not model_name_gz:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            model_name_pt = f"model_rl_{timestamp}.pt"
-            model_name_gz = f"model_rl_{timestamp}.txt.gz"
+            model_name_pt = f"model_sl_{timestamp}.pt"
+            model_name_gz = f"model_sl_{timestamp}.txt.gz"
         
         # PyTorch形式で保存
         save_path_pt = os.path.join(STUDY_MODEL_DIR, model_name_pt)
@@ -779,7 +550,7 @@ def run_training_task(mode):
 
         training_status["progress"] = 100
         training_status["is_training"] = False
-        training_status["message"] = f"教師学習および1局の自戦対局による強化学習が完了しました。モデル: {model_name_gz}"
+        training_status["message"] = f"教師学習が完了しました。モデル: {model_name_gz}"
         
     except Exception as e:
         import traceback
@@ -808,6 +579,119 @@ def train():
 @app.route('/train_status', methods=['GET'])
 def get_train_status():
     return jsonify(training_status)
+
+def run_self_play_task(model_filename, num_games=100):
+    global selfplay_status, model_path
+    selfplay_status["is_running"] = True
+    selfplay_status["progress"] = 0
+    selfplay_status["message"] = f"モデル {model_filename} で自戦対局準備中..."
+    
+    try:
+        # モデルのパスを特定
+        full_model_path = os.path.join(STUDY_MODEL_DIR, model_filename)
+        if not os.path.exists(full_model_path):
+            # デフォルトモデルの場合
+            if model_filename == os.path.basename(DEFAULT_MODEL_PATH):
+                full_model_path = DEFAULT_MODEL_PATH
+            else:
+                raise FileNotFoundError(f"Model file not found: {model_filename}")
+
+        # PyTorchモデルをロードするために .pt を探す
+        pt_path = full_model_path
+        if full_model_path.endswith(".txt.gz"):
+            pt_path = full_model_path.replace(".txt.gz", ".pt")
+        
+        if not os.path.exists(pt_path):
+            raise FileNotFoundError(f"PyTorch model file not found: {pt_path}")
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = SimpleGoNet(size=9).to(device)
+        model.load_state_dict(torch.load(pt_path, map_location=device))
+        model.eval()
+
+        # 自戦対局実行
+        selfplay_dir = run_self_play(model, num_games=num_games, status_dict=selfplay_status)
+
+        # 強化学習 (自戦対局データによる追加学習)
+        selfplay_status["progress"] = 80
+        selfplay_status["message"] = "自戦対局データで強化学習中..."
+        
+        features_rl, labels_rl = load_sgf_data(selfplay_dir)
+        if features_rl:
+            optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+            criterion = nn.CrossEntropyLoss()
+            
+            X_rl = torch.tensor(np.array(features_rl), dtype=torch.float32).to(device)
+            y_rl = torch.tensor(np.array(labels_rl), dtype=torch.long).to(device)
+            dataset_rl = torch.utils.data.TensorDataset(X_rl, y_rl)
+            dataloader_rl = torch.utils.data.DataLoader(dataset_rl, batch_size=32, shuffle=True)
+            
+            rl_epochs = 5
+            for epoch in range(rl_epochs):
+                model.train()
+                total_loss = 0
+                for batch_idx, (data, target) in enumerate(dataloader_rl):
+                    optimizer.zero_grad()
+                    output, _ = model(data)
+                    loss = criterion(output, target)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+                
+                avg_loss = total_loss / len(dataloader_rl)
+                selfplay_status["progress"] = 80 + int((epoch + 1) / rl_epochs * 15)
+                selfplay_status["message"] = f"強化学習中... Epoch {epoch+1}/{rl_epochs}, Loss: {avg_loss:.4f}"
+                print(f"Self-play RL Epoch {epoch+1}/{rl_epochs}, Loss: {avg_loss:.4f}")
+
+        # 最終モデルの保存（自戦対局後の学習結果は常に新規または上書きとして保存）
+        # 元のモデルがデフォルトモデル以外ならそのモデルを更新、デフォルトなら新規作成
+        model_name_gz = model_filename
+        if model_filename == os.path.basename(DEFAULT_MODEL_PATH):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_name_gz = f"model_rl_{timestamp}.txt.gz"
+        
+        model_name_pt = model_name_gz.replace(".txt.gz", ".pt")
+        
+        # PyTorch形式で保存
+        save_path_pt = os.path.join(STUDY_MODEL_DIR, model_name_pt)
+        torch.save(model.state_dict(), save_path_pt)
+        
+        # KataGo形式（.txt.gz）で保存
+        save_model_as_katago(model, model_name_gz)
+
+        selfplay_status["progress"] = 100
+        selfplay_status["is_running"] = False
+        selfplay_status["message"] = f"モデル {model_name_gz} による自戦対局および強化学習が完了しました。"
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        selfplay_status["is_running"] = False
+        selfplay_status["message"] = f"エラーが発生しました: {str(e)}"
+
+@app.route('/start_selfplay', methods=['POST'])
+def start_selfplay_route():
+    data = request.json
+    model_filename = data.get('model')
+    num_games = data.get('num_games', 100)
+    
+    if selfplay_status["is_running"]:
+        return jsonify({'status': 'error', 'message': '現在自戦対局が進行中です'}), 400
+    
+    if not model_filename:
+        return jsonify({'status': 'error', 'message': 'モデルが指定されていません'}), 400
+
+    # 同期的に自戦対局を実行
+    run_self_play_task(model_filename, num_games)
+    
+    if "エラー" in selfplay_status["message"]:
+        return jsonify({'status': 'error', 'message': selfplay_status["message"]}), 500
+    
+    return jsonify({'status': 'success', 'message': selfplay_status["message"]})
+
+@app.route('/selfplay_status', methods=['GET'])
+def get_selfplay_status():
+    return jsonify(selfplay_status)
 
 @app.route('/models', methods=['GET'])
 def get_models():
