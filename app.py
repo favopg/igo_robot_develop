@@ -7,6 +7,7 @@ import threading
 import time
 import os
 import shutil
+import multiprocessing
 from datetime import datetime
 import numpy as np
 
@@ -295,6 +296,45 @@ def run_mcts(game, model, device, num_simulations=50, c_puct=1.0):
     best_move = max(root.children.items(), key=lambda x: x[1].visit_count)[0]
     return best_move
 
+def self_play_worker(model_state, num_games, worker_id, selfplay_dir):
+    """
+    別プロセスで自戦対局を実行するワーカー関数。
+    """
+    import torch
+    from go_game import GoGame
+    from sgfmill import sgf
+    from datetime import datetime
+    import os
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = SimpleGoNet(size=9).to(device)
+    model.load_state_dict(model_state)
+    model.eval()
+
+    results = []
+    for i in range(num_games):
+        game_obj = GoGame(size=9)
+        sgf_game = sgf.Sgf_game(size=9)
+        
+        while not game_obj.is_over():
+            color_char = 'b' if game_obj.current_player == GoGame.BLACK else 'w'
+            move = run_mcts(game_obj, model, device, num_simulations=50)
+            game_obj.play(move[0], move[1]) if move else game_obj.play(None, None)
+            
+            node = sgf_game.extend_main_sequence()
+            node.set_move(color_char, move)
+            
+            if len(game_obj.history) > 300:
+                break
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"selfplay_{timestamp}_w{worker_id}_{i}.sgf"
+        save_path = os.path.join(selfplay_dir, filename)
+        with open(save_path, "wb") as f:
+            f.write(sgf_game.serialise())
+        results.append(save_path)
+    return results
+
 # --- 教師あり学習 (SL) 用のネットワーク定義 ---
 # KataGo互換の最小限のResNet構造を目指します
 class ResBlock(nn.Module):
@@ -504,46 +544,52 @@ training_status = {
 }
 
 def run_self_play(model, num_games=100):
-    """モデルを使用して自戦対局を行い、SGFファイルを保存します。"""
+    """モデルを使用して自戦対局を行い、SGFファイルを保存します（並列化版）。"""
     global training_status
     selfplay_dir = "selfplay_sgf"
     if not os.path.exists(selfplay_dir):
         os.makedirs(selfplay_dir)
         
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.eval()
+    num_processes = 4
+    games_per_process = num_games // num_processes
+    remaining_games = num_games % num_processes
     
-    for i in range(num_games):
-        game_obj = GoGame(size=9)
-        sgf_game = sgf.Sgf_game(size=9)
+    # モデルの重みをコピー（各プロセスに渡すため）
+    model_state = {k: v.cpu() for k, v in model.state_dict().items()}
+    
+    tasks = []
+    for i in range(num_processes):
+        n = games_per_process + (1 if i < remaining_games else 0)
+        if n > 0:
+            tasks.append((model_state, n, i, selfplay_dir))
+    
+    print(f"Starting parallel self-play with {num_processes} processes for {num_games} games...")
+    
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        # 非同期で実行し、進捗を監視
+        results = [pool.apply_async(self_play_worker, t) for t in tasks]
         
-        # 対局ループ
-        while not game_obj.is_over():
-            color_char = 'b' if game_obj.current_player == GoGame.BLACK else 'w'
+        finished_games = 0
+        while finished_games < num_games:
+            time.sleep(1)
+            # 各タスクの進捗を確認（簡易的にファイル数でカウント）
+            current_files = len([f for f in os.listdir(selfplay_dir) if f.startswith("selfplay_")])
+            # ※ 実際にはこのディレクトリに既存のファイルがある可能性があるため、
+            # より正確にはワーカーの完了報告を待つか、一時ディレクトリを使うべきですが、
+            # ここではUI表示用に「現在のおおよその完了数」を表示します。
             
-            # MCTSを使用して次の手を選択
-            move = run_mcts(game_obj, model, device, num_simulations=50)
-            
-            game_obj.play(move[0], move[1]) if move else game_obj.play(None, None)
-            
-            # SGFに記録
-            node = sgf_game.extend_main_sequence()
-            node.set_move(color_char, move)
-            
-            if len(game_obj.history) > 300: # 無限ループ防止
+            # 完了したタスクの数を確認
+            completed_tasks = sum(1 for r in results if r.ready())
+            if completed_tasks == len(tasks):
                 break
-        
-        # SGF保存
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"selfplay_{timestamp}_{i}.sgf"
-        with open(os.path.join(selfplay_dir, filename), "wb") as f:
-            f.write(sgf_game.serialise())
-            
-        if (i + 1) % 10 == 0 or i == 0:
-            training_status["progress"] = 40 + int((i + 1) / num_games * 30)
-            training_status["message"] = f"自戦対局中... {i+1}/{num_games} 局完了"
-            print(f"Self-play: {i+1}/{num_games} games done")
+                
+            # 進捗更新 (UI用)
+            # 暫定的に1局終わるごとにカウントを増やしたいが、非同期なので難しい。
+            # 今回はタスク完了数で更新するか、ファイル増分を見る。
+            training_status["progress"] = 40 + int((completed_tasks / len(tasks)) * 30)
+            training_status["message"] = f"並列自戦対局中... {completed_tasks}/{len(tasks)} タスク完了"
 
+    print("Parallel self-play completed.")
     return selfplay_dir
 
 def run_training_task(mode):
