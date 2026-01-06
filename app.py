@@ -459,6 +459,50 @@ def board_to_tensor(board_obj, color):
     
     return tensor
 
+def get_symmetries(tensor, label, size=9):
+    """
+    盤面テンソルと指し手ラベルの8つの対称形（回転・反転）を生成します。
+    tensor: (3, size, size)
+    label: 指し手のインデックス (0 to size*size)
+    """
+    symmetries = []
+    
+    # 指し手の座標を取得
+    if label == size * size: # パス
+        r, c = None, None
+    else:
+        r, c = divmod(label, size)
+
+    for i in range(8):
+        # テンソルの回転・反転
+        # i: 0-3 回転, 4-7 反転して回転
+        new_tensor = tensor.copy()
+        if i >= 4:
+            new_tensor = np.flip(new_tensor, axis=2) # 左右反転
+        
+        rot_count = i % 4
+        if rot_count > 0:
+            new_tensor = np.rot90(new_tensor, k=rot_count, axes=(1, 2))
+        
+        # ラベルの回転・反転
+        if r is None:
+            new_label = size * size
+        else:
+            # numpyのrot90(k=1)は (r, c) -> (size-1-c, r) に相当
+            # flip(axis=2)は (r, c) -> (r, size-1-c) に相当
+            curr_r, curr_c = r, c
+            if i >= 4:
+                curr_c = size - 1 - curr_c
+            
+            for _ in range(rot_count):
+                curr_r, curr_c = size - 1 - curr_c, curr_r
+            
+            new_label = curr_r * size + curr_c
+            
+        symmetries.append((new_tensor, new_label))
+    
+    return symmetries
+
 def load_sgf_data(sgf_dir):
     features = []
     labels = []
@@ -480,18 +524,28 @@ def load_sgf_data(sgf_dir):
                 board = boards.Board(board_size)
                 for move_obj in game.get_main_sequence():
                     color, move = move_obj.get_move()
-                    if color is not None and move is not None:
-                        # 盤面状態を保存
-                        features.append(board_to_tensor(board, color))
-                        # 指し手をラベルとして保存
-                        r, c = move
-                        labels.append(r * board_size + c)
+                    if color is not None:
+                        # 盤面状態をテンソル化
+                        tensor = board_to_tensor(board, color)
+                        
+                        if move is not None:
+                            r, c = move
+                            label = r * board_size + c
+                            # 盤面を更新（データ保存の前に行うと、打った後の盤面になってしまうため注意が必要だが、
+                            # 現状のロジックでは play する前に board_to_tensor しているので正しい）
+                        else:
+                            # パス
+                            label = board_size * board_size
+                        
+                        # データ拡張（8つの対称形を追加）
+                        symmetries = get_symmetries(tensor, label, board_size)
+                        for sym_tensor, sym_label in symmetries:
+                            features.append(sym_tensor)
+                            labels.append(sym_label)
+                        
                         # 盤面を更新
-                        board.play(r, c, color)
-                    elif color is not None and move is None:
-                        # パス
-                        features.append(board_to_tensor(board, color))
-                        labels.append(board_size * board_size) # パスのインデックス
+                        if move is not None:
+                            board.play(r, c, color)
             except Exception as e:
                 print(f"Error loading {filename}: {e}")
                 continue
