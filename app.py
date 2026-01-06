@@ -578,7 +578,7 @@ def run_training_task(mode):
         dataset = torch.utils.data.TensorDataset(X, y)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=True)
         
-        epochs = 10
+        epochs = 5
         for epoch in range(epochs):
             model.train()
             total_loss = 0
@@ -597,8 +597,8 @@ def run_training_task(mode):
 
         # 2. 自戦対局によるデータ収集
         training_status["progress"] = 40
-        training_status["message"] = "モンテカルロ木探索（MCTS）を用いた自戦対局を開始します (100局)..."
-        selfplay_dir = run_self_play(model, num_games=100)
+        training_status["message"] = "モンテカルロ木探索（MCTS）を用いた自戦対局を開始します (1局)..."
+        selfplay_dir = run_self_play(model, num_games=1)
 
         # 3. 強化学習 (自戦対局データによる追加学習)
         training_status["progress"] = 70
@@ -611,7 +611,7 @@ def run_training_task(mode):
             dataset_rl = torch.utils.data.TensorDataset(X_rl, y_rl)
             dataloader_rl = torch.utils.data.DataLoader(dataset_rl, batch_size=32, shuffle=True)
             
-            rl_epochs = 10
+            rl_epochs = 5
             for epoch in range(rl_epochs):
                 model.train()
                 total_loss = 0
@@ -632,9 +632,43 @@ def run_training_task(mode):
         if not os.path.exists(STUDY_MODEL_DIR):
             os.makedirs(STUDY_MODEL_DIR)
             
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_name_pt = f"model_rl_{timestamp}.pt"
-        model_name_gz = f"model_rl_{timestamp}.txt.gz"
+        model_name_gz = None
+        if mode == 'overwrite':
+            # システム日付より前のモデルで、最も日付が近いものを探す
+            current_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            target_file = None
+            max_dt = None
+            
+            import re
+            pattern = re.compile(r"model_rl_(\d{8})_(\d{6})\.txt\.gz")
+            
+            if os.path.exists(STUDY_MODEL_DIR):
+                for filename in os.listdir(STUDY_MODEL_DIR):
+                    match = pattern.match(filename)
+                    if match:
+                        f_date_str = match.group(1)
+                        f_time_str = match.group(2)
+                        try:
+                            f_dt = datetime.strptime(f_date_str + f_time_str, "%Y%m%d%H%M%S")
+                            if f_dt < current_dt:
+                                if max_dt is None or f_dt > max_dt:
+                                    max_dt = f_dt
+                                    target_file = filename
+                        except ValueError:
+                            continue
+            
+            if target_file:
+                model_name_gz = target_file
+                model_name_pt = target_file.replace(".txt.gz", ".pt")
+                print(f"Overwriting nearest past model: {model_name_gz}")
+            else:
+                # 過去のモデルが見つからない場合は新規作成と同じ挙動（または今日の日付）
+                print("No past model found for overwrite. Creating new model name.")
+
+        if not model_name_gz:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_name_pt = f"model_rl_{timestamp}.pt"
+            model_name_gz = f"model_rl_{timestamp}.txt.gz"
         
         # PyTorch形式で保存
         save_path_pt = os.path.join(STUDY_MODEL_DIR, model_name_pt)
@@ -645,7 +679,7 @@ def run_training_task(mode):
 
         training_status["progress"] = 100
         training_status["is_training"] = False
-        training_status["message"] = f"教師学習および100局の自戦対局による強化学習が完了しました。モデル: {model_name_gz}"
+        training_status["message"] = f"教師学習および1局の自戦対局による強化学習が完了しました。モデル: {model_name_gz}"
         
     except Exception as e:
         import traceback
