@@ -611,7 +611,7 @@ def run_training_task(mode):
             dataset_rl = torch.utils.data.TensorDataset(X_rl, y_rl)
             dataloader_rl = torch.utils.data.DataLoader(dataset_rl, batch_size=32, shuffle=True)
             
-            rl_epochs = 5
+            rl_epochs = 10
             for epoch in range(rl_epochs):
                 model.train()
                 total_loss = 0
