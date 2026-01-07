@@ -281,24 +281,42 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
 
             if (data.status === 'success') {
-                selfplayProgressBar.style.width = `100%`;
-                selfplayMessage.textContent = data.message;
-                alert('自戦対局が完了しました！');
+                pollSelfplayStatus();
             } else {
                 alert('エラー: ' + data.message);
-                selfplayMessage.textContent = 'エラーが発生しました。';
+                selfplayStartBtn.disabled = false;
             }
         } catch (error) {
             console.error('Selfplay execution failed', error);
             alert('通信エラーが発生しました。');
-        } finally {
             selfplayStartBtn.disabled = false;
         }
     });
 
     function pollSelfplayStatus() {
-        // 同期処理に変更したため、ポーリングは不要となりましたが、
-        // 既存のコードとの互換性や将来的な拡張のために定義のみ残すか、削除します。
+        const interval = setInterval(async () => {
+            try {
+                const response = await fetch('/selfplay_status');
+                const data = await response.json();
+                
+                selfplayProgressBar.style.width = `${data.progress}%`;
+                selfplayMessage.textContent = data.message;
+                
+                if (!data.is_running) {
+                    clearInterval(interval);
+                    selfplayStartBtn.disabled = false;
+                    if (data.progress === 100) {
+                        alert('自戦対局と強化学習が完了しました！');
+                    } else if (data.message.includes('エラー')) {
+                        alert(data.message);
+                    }
+                }
+            } catch (error) {
+                console.error('Selfplay polling failed', error);
+                clearInterval(interval);
+                selfplayStartBtn.disabled = false;
+            }
+        }, 1000);
     }
 
     createBoard();

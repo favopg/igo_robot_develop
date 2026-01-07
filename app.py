@@ -439,12 +439,11 @@ def run_self_play(model, num_games=100, status_dict=None):
                 break
                 
             # 進捗更新 (UI用)
-            # 暫定的に1局終わるごとにカウントを増やしたいが、非同期なので難しい。
-            # 今回はタスク完了数で更新するか、ファイル増分を見る。
             if status_dict == training_status:
                 status_dict["progress"] = 40 + int((completed_tasks / len(tasks)) * 30)
             else:
-                status_dict["progress"] = int((completed_tasks / len(tasks)) * 100)
+                # 自戦対局タスクの場合、進捗は 0-80% の範囲（残りの20%は強化学習）
+                status_dict["progress"] = int((completed_tasks / len(tasks)) * 80)
             status_dict["message"] = f"並列自戦対局中... {completed_tasks}/{len(tasks)} タスク完了"
 
     print("Parallel self-play completed.")
@@ -681,13 +680,11 @@ def start_selfplay_route():
     if not model_filename:
         return jsonify({'status': 'error', 'message': 'モデルが指定されていません'}), 400
 
-    # 同期的に自戦対局を実行
-    run_self_play_task(model_filename, num_games)
+    # 非同期的に自戦対局を実行
+    thread = threading.Thread(target=run_self_play_task, args=(model_filename, num_games))
+    thread.start()
     
-    if "エラー" in selfplay_status["message"]:
-        return jsonify({'status': 'error', 'message': selfplay_status["message"]}), 500
-    
-    return jsonify({'status': 'success', 'message': selfplay_status["message"]})
+    return jsonify({'status': 'success', 'message': '自戦対局を開始しました'})
 
 @app.route('/selfplay_status', methods=['GET'])
 def get_selfplay_status():
