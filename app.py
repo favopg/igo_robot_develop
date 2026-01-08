@@ -41,38 +41,11 @@ class SimplePyTorchAI:
             print(f"Error loading model {model_path}: {e}")
 
     def get_move(self, game):
-        # 現在の手番の色に合わせてTensorを作成
-        color_char = 'b' if game.current_player == GoGame.BLACK else 'w'
-        board_tensor = board_to_tensor(game_to_sgfmill_board(game), color_char)
-        
-        input_tensor = torch.tensor(np.array([board_tensor]), dtype=torch.float32).to(self.device)
-        
-        with torch.no_grad():
-            output, _ = self.model(input_tensor)
-            probabilities = F.softmax(output, dim=1).cpu().numpy()[0]
-        
-        # 合法手のみを選択（簡易的に空点 + パス）
-        valid_moves = game.get_valid_moves()
-        move_indices = []
-        for mv in valid_moves:
-            if mv is None:
-                move_indices.append(9 * 9)
-            else:
-                move_indices.append(mv[0] * 9 + mv[1])
-        
-        # 合法手の中で最も確率が高いものを選択
-        best_move_idx = -1
-        max_prob = -1.0
-        
-        for idx in move_indices:
-            if probabilities[idx] > max_prob:
-                max_prob = probabilities[idx]
-                best_move_idx = idx
-        
-        if best_move_idx == 9 * 9 or best_move_idx == -1:
-            return None
-        else:
-            return divmod(best_move_idx, 9)
+        # MCTSを使用して次の一手を選択
+        # num_simulations を調整することで強さと速度を調整可能
+        # 最初は 50〜100 程度を推奨
+        move = run_mcts(game, self.model, self.device, num_simulations=800)
+        return move
 
 def game_to_sgfmill_board(game):
     board = boards.Board(game.size)
@@ -694,7 +667,8 @@ def get_selfplay_status():
 def get_models():
     models = [os.path.basename(DEFAULT_MODEL_PATH)]
     if os.path.exists(STUDY_MODEL_DIR):
-        study_models = [f for f in os.listdir(STUDY_MODEL_DIR) if f.endswith(".gz")]
+        # .gz (KataGo形式) と .pt (PyTorch形式) の両方を取得
+        study_models = [f for f in os.listdir(STUDY_MODEL_DIR) if f.endswith(".gz") or f.endswith(".pt")]
         # 重複を避ける（デフォルトモデルがstudy_model配下にある場合も考慮）
         for sm in study_models:
             if sm not in models:
