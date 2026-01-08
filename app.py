@@ -28,23 +28,23 @@ app = Flask(__name__)
 game = GoGame(size=9)
 
 class SimplePyTorchAI:
-    def __init__(self, color, model_path):
+    def __init__(self, color, model_path, num_simulations=1600):
         self.color = color
         self.model_path = model_path
+        self.num_simulations = num_simulations
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = SimpleGoNet(size=9).to(self.device)
         try:
             self.model.load_state_dict(torch.load(model_path, map_location=self.device))
             self.model.eval()
-            print(f"Loaded PyTorch model from {model_path}")
+            print(f"Loaded PyTorch model from {model_path} with simulations={num_simulations}")
         except Exception as e:
             print(f"Error loading model {model_path}: {e}")
 
     def get_move(self, game):
         # MCTSを使用して次の一手を選択
         # num_simulations を調整することで強さと速度を調整可能
-        # 最初は 50〜100 程度を推奨
-        move = run_mcts(game, self.model, self.device, num_simulations=1600)
+        move = run_mcts(game, self.model, self.device, num_simulations=self.num_simulations)
         return move
 
 def game_to_sgfmill_board(game):
@@ -324,13 +324,13 @@ sgf_dir = SGF_DIR
 
 ai = None # 初期状態ではNone
 
-def get_ai_instance(m_path=None):
+def get_ai_instance(m_path=None, num_simulations=1600):
     global ai, model_path
     if m_path:
         model_path = m_path
     
-    # 既存のAIとモデルが異なる場合に再生成
-    if ai is None or ai.model_path != model_path:
+    # 既存のAIとモデルが異なる、または探索数が異なる場合に再生成
+    if ai is None or ai.model_path != model_path or (hasattr(ai, 'num_simulations') and ai.num_simulations != num_simulations):
         if ai and hasattr(ai, 'proc') and ai.proc:
             # KataGoプロセスの終了
             try:
@@ -340,12 +340,12 @@ def get_ai_instance(m_path=None):
         
         # モデルファイル形式に応じてAIクラスを選択
         if model_path.endswith(".pt"):
-            ai = SimplePyTorchAI(GoGame.WHITE, model_path)
+            ai = SimplePyTorchAI(GoGame.WHITE, model_path, num_simulations=num_simulations)
         elif ("model_sl_" in model_path or "model_rl_" in model_path) and model_path.endswith(".txt.gz"):
             # 自作モデルの.txt.gzもPyTorchで読み込む（元となる.ptファイルを探す）
             pt_path = model_path.replace(".txt.gz", ".pt")
             if os.path.exists(pt_path):
-                ai = SimplePyTorchAI(GoGame.WHITE, pt_path)
+                ai = SimplePyTorchAI(GoGame.WHITE, pt_path, num_simulations=num_simulations)
             else:
                 # .ptがない場合はKataGoを試みるが、失敗する可能性が高い
                 ai = KataGoAI(GoGame.WHITE, katago_path, model_path, config_path)
@@ -693,6 +693,7 @@ def move():
     data = request.json
     r = data.get('r')
     c = data.get('c')
+    num_simulations = int(data.get('num_simulations', 1600))
     
     # ユーザー（黒）の手
     if r is None or c is None:
@@ -705,7 +706,7 @@ def move():
 
     # ゲームが終了していなければAI（白）の手
     if not game.is_over() and game.current_player == GoGame.WHITE:
-        current_ai = get_ai_instance()
+        current_ai = get_ai_instance(num_simulations=num_simulations)
         ai_move = current_ai.get_move(game)
         if ai_move is None:
             game.play(None, None)
@@ -745,6 +746,7 @@ def reset():
     global game
     data = request.json
     selected_model = data.get('model')
+    num_simulations = int(data.get('num_simulations', 1600))
     
     if selected_model:
         # モデルパスを決定する
@@ -754,12 +756,12 @@ def reset():
             m_path = os.path.join(STUDY_MODEL_DIR, selected_model)
         
         if os.path.exists(m_path):
-            get_ai_instance(m_path)
+            get_ai_instance(m_path, num_simulations=num_simulations)
         else:
             return jsonify({'status': 'error', 'message': f'Model not found: {selected_model}'}), 404
     else:
         # モデルが指定されない場合は現在のモデルでAIを初期化（まだ存在しない場合）
-        get_ai_instance()
+        get_ai_instance(num_simulations=num_simulations)
 
     game = GoGame(size=9)
     return jsonify({'status': 'success'})

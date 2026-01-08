@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const resignBtn = document.getElementById('resign-btn');
     const resetBtn = document.getElementById('reset-btn');
     const modelSelect = document.getElementById('model-select');
+    const simSelect = document.getElementById('sim-select');
     const startGameBtn = document.getElementById('start-game-btn');
 
     let size = 9;
@@ -166,10 +167,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
+            const num_simulations = simSelect.value;
             const response = await fetch('/move', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ r, c })
+                body: JSON.stringify({ r, c, num_simulations })
             });
             const data = await response.json();
             if (data.status === 'success') {
@@ -201,10 +203,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     resetBtn.addEventListener('click', async () => {
         if (confirm('現在の対局をリセットしますか？')) {
+            const num_simulations = simSelect.value;
             await fetch('/reset', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
+                body: JSON.stringify({ num_simulations })
             });
             updateState();
         }
@@ -212,11 +215,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     startGameBtn.addEventListener('click', async () => {
         const model = modelSelect.value;
-        if (confirm(`モデル「${model}」で新しい対局を開始しますか？`)) {
+        const num_simulations = simSelect.value;
+        if (confirm(`モデル「${model}」探索数「${num_simulations}」で新しい対局を開始しますか？`)) {
             const response = await fetch('/reset', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model })
+                body: JSON.stringify({ model, num_simulations })
             });
             const data = await response.json();
             if (data.status === 'success') {
