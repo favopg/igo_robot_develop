@@ -13,6 +13,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let size = 9;
     let currentPlayer = 1; // 1: 黒, -1: 白
 
+    let isWaiting = false;
+
     function createBoard() {
         boardElement.innerHTML = '';
         for (let r = 0; r < size; r++) {
@@ -21,7 +23,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 intersection.className = 'intersection';
                 intersection.dataset.r = r;
                 intersection.dataset.c = c;
-                intersection.addEventListener('click', () => handleMove(r, c));
+                intersection.addEventListener('click', () => {
+                    if (!isWaiting) {
+                        handleMove(r, c);
+                    }
+                });
                 
                 // プレビュー機能の追加
                 intersection.addEventListener('mouseenter', () => showPreview(intersection));
@@ -128,9 +134,33 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function handleMove(r, c) {
+        if (isWaiting) return;
+
         // 着手時にプレビューを削除
         const intersections = boardElement.querySelectorAll('.intersection');
         intersections.forEach(inter => removePreview(inter));
+
+        // 先行描画 (黒石を置く)
+        if (r !== null && c !== null) {
+            const targetInter = Array.from(intersections).find(inter => 
+                parseInt(inter.dataset.r) === r && parseInt(inter.dataset.c) === c
+            );
+            if (targetInter && !targetInter.querySelector('.stone')) {
+                const stone = document.createElement('div');
+                stone.className = `stone black last-move`;
+                targetInter.appendChild(stone);
+                
+                // AI思考中のメッセージを表示
+                messageElement.textContent = 'AIが考えています...';
+                messageElement.style.color = 'blue';
+                isWaiting = true;
+            }
+        } else {
+            // パスの場合も待ち状態にする
+            messageElement.textContent = 'AIが考えています...';
+            messageElement.style.color = 'blue';
+            isWaiting = true;
+        }
 
         try {
             const response = await fetch('/move', {
@@ -144,9 +174,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateStatus(data);
             } else {
                 messageElement.textContent = data.message;
+                messageElement.style.color = 'red';
             }
         } catch (error) {
             console.error('Move failed', error);
+            messageElement.textContent = '通信エラーが発生しました。';
+            messageElement.style.color = 'red';
+        } finally {
+            isWaiting = false;
         }
     }
 
