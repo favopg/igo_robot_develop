@@ -155,12 +155,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 targetInter.appendChild(stone);
                 
                 // AI思考中のメッセージを表示
+                turnIndicator.textContent = '白の番です';
                 messageElement.textContent = 'AIが考えています...';
                 messageElement.style.color = 'blue';
                 isWaiting = true;
             }
         } else {
             // パスの場合も待ち状態にする
+            turnIndicator.textContent = '白の番です';
             messageElement.textContent = 'AIが考えています...';
             messageElement.style.color = 'blue';
             isWaiting = true;
