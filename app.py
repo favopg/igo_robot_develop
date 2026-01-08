@@ -44,7 +44,7 @@ class SimplePyTorchAI:
         # MCTSを使用して次の一手を選択
         # num_simulations を調整することで強さと速度を調整可能
         # 最初は 50〜100 程度を推奨
-        move = run_mcts(game, self.model, self.device, num_simulations=800)
+        move = run_mcts(game, self.model, self.device, num_simulations=1600)
         return move
 
 def game_to_sgfmill_board(game):

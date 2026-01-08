@@ -81,7 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const c = parseInt(inter.dataset.c);
             const value = board[r][c];
             
-            // Remove existing stone
+            // Remove existing stone and any highlights
             const existingStone = inter.querySelector('.stone');
             if (existingStone) existingStone.remove();
 
@@ -89,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const stone = document.createElement('div');
                 stone.className = `stone ${value === 1 ? 'black' : 'white'}`;
                 
-                // 最新の手を強調表示
+                // 最新の手を強調表示 (lastMoveが指定されている場合のみ)
                 if (lastMove && lastMove[0] === r && lastMove[1] === c) {
                     stone.classList.add('last-move');
                 }
@@ -139,6 +139,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // 着手時にプレビューを削除
         const intersections = boardElement.querySelectorAll('.intersection');
         intersections.forEach(inter => removePreview(inter));
+
+        // 既存の赤いマーク(last-move)をすべて削除
+        document.querySelectorAll('.last-move').forEach(el => el.classList.remove('last-move'));
 
         // 先行描画 (黒石を置く)
         if (r !== null && c !== null) {
