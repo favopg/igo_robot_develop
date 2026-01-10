@@ -279,16 +279,54 @@ def load_sgf_data(sgf_dir):
             path = os.path.join(sgf_dir, filename)
             try:
                 with open(path, "rb") as f:
-                    game = sgf.Sgf_game.from_bytes(f.read())
+                    raw_data = f.read()
+                
+                # 複数のエンコーディングを試行してデコード
+                game = None
+                for encoding in ["utf-8", "shift_jis", "cp932", "iso2022_jp"]:
+                    try:
+                        content = raw_data.decode(encoding)
+                        game = sgf.Sgf_game.from_string(content)
+                        break
+                    except:
+                        continue
+                
+                if game is None:
+                    # デコードに失敗した場合はsgfmillのデフォルトに任せる
+                    game = sgf.Sgf_game.from_bytes(raw_data)
                 
                 board_size = game.get_size()
                 if board_size != 9:
                     continue
                 
                 board = boards.Board(board_size)
+                
+                # 対局者名を取得
+                black_player = ""
+                white_player = ""
+                try:
+                    black_player = game.root.get("PB")
+                    if black_player is None: black_player = ""
+                except KeyError:
+                    pass
+                try:
+                    white_player = game.root.get("PW")
+                    if white_player is None: white_player = ""
+                except KeyError:
+                    pass
+
                 for move_obj in game.get_main_sequence():
                     color, move = move_obj.get_move()
                     if color is not None:
+                        # 「イッシー」が含まれているプレイヤーの手のみ学習対象にする
+                        current_player_name = black_player if color == "b" else white_player
+                        if "イッシー" not in current_player_name:
+                            # 盤面だけ更新して、学習データには追加しない
+                            if move is not None:
+                                r, c = move
+                                board.play(r, c, color)
+                            continue
+
                         # 盤面状態をテンソル化
                         tensor = board_to_tensor(board, color)
                         
